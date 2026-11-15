@@ -12,6 +12,10 @@ on:
         description: "只构建，不创建 Release"
         type: boolean
         default: false
+      prerelease:
+        description: "把本次 Release 标记为预发布"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -63,15 +67,9 @@ jobs:
         run: |
           set -euo pipefail
           mc_version=$(grep -E '^mcVersion=' gradle.properties | cut -d= -f2 | tr -d ' \r')
-          pre_version=$(grep -E '^preVersion=' gradle.properties | cut -d= -f2 | tr -d ' \r')
           short_sha=$(git rev-parse --short=7 HEAD)
           tag="${mc_version}-${GITHUB_RUN_NUMBER}-${short_sha}"
-          jar_name="leaves-${mc_version}.jar"
-          if [ "${pre_version:-false}" = "true" ]; then
-            prerelease=true
-          else
-            prerelease=false
-          fi
+          jar_name="leaves-${mc_version}-${short_sha}.jar"
 
           built=$(ls -1 leaves-server/build/libs/leaves-leavesclip-*.jar | head -n 1)
           if [ -z "$built" ]; then
@@ -85,7 +83,6 @@ jobs:
             echo "jar=$jar_name"
             echo "name=Leaves $tag"
             echo "sha256=$(sha256sum "$jar_name" | cut -d' ' -f1)"
-            echo "prerelease=$prerelease"
           } >> "$GITHUB_OUTPUT"
 
           {
@@ -126,6 +123,6 @@ jobs:
           body_path: release-notes.md
           files: ${{ steps.meta.outputs.jar }}
           draft: false
-          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
-          make_latest: ${{ steps.meta.outputs.prerelease == 'false' }}
+          prerelease: ${{ inputs.prerelease == true }}
+          make_latest: ${{ inputs.prerelease != true }}
           generate_release_notes: false
