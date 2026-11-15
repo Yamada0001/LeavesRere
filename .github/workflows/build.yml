@@ -1,99 +1,131 @@
-name: Leaves CI
+name: Build and Release
 
 on:
   push:
-    branches: [ master ]
+    branches:
+      - dev/26.3
+      - master
+      - main
   workflow_dispatch:
+    inputs:
+      skip_release:
+        description: "只构建，不创建 Release"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    if: github.repository == 'LeavesMC/Leaves'
     steps:
-      - name: Get repository
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Get JDK 21
-        uses: actions/setup-java@v5
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
         with:
-          java-version: "21"
-          distribution: "temurin"
-      - name: Setup Gradle
+          java-version: "25"
+          distribution: "zulu"
+
+      - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           add-job-summary: never
           cache-read-only: false
-      - name: Setup Git Config
+
+      - name: Configure Git
         run: |
           git config --global user.email "ci@leavesmc.org"
-          git config --global user.name "LeavesMC CI"
-      - name: Get Build Number
-        run: bash scripts/GetBuildNumber.sh
-      - name: Apply Patches
+          git config --global user.name "Leaves CI"
+
+      - name: Apply patches
         run: ./gradlew applyAllPatches
-      - name: Create Leavesclip Jar
-        run: ./gradlew createMojmapLeavesclipJar
+
+      # --rerun 是必须的：jar 的 MANIFEST 里写了 Instant.now() 生成的 Build-Time，
+      # 每次构建字节都不同。若 leavesclip 的 patch target 与 patches.list 记录的
+      # outputHash 来自不同批次，运行时会报 "Patch not applied correctly"。
+      # 全量重跑保证两者同批次。
+      - name: Build leavesclip jar
+        run: ./gradlew :leaves-server:createLeavesclipJar --rerun
         env:
-          BUILD_NUMBER: ${{ env.BUILD_NUMBER }}
-      - name: Publish to Maven repo
+          BUILD_NUMBER: ${{ github.run_number }}
+
+      - name: Collect artifact
+        id: meta
         run: |
-          ./gradlew :leaves-api:publish
-          ./gradlew :leaves-server:publishDevBundlePublicationToLeavesRepository -PpublishDevBundle=true
-        env:
-          LEAVES_USERNAME: ${{ secrets.NEW_REPO_USERNAME }}
-          LEAVES_PASSWORD: ${{ secrets.NEW_REPO_PASSWORD }}
-      - name: Create Configuration
-        continue-on-error: true
-        run: ./gradlew createLeavesConfig
-      - name: Push Configuration
-        continue-on-error: true
-        run: |
-          mkdir --parents "$HOME/.ssh"
-          ssh-keyscan -H "github.com" > "$HOME/.ssh/known_hosts"
-          echo "${{ secrets.CONFIG_DEPLOY_KEY }}" > "$HOME/.ssh/deploy.key"
-          chmod 400 "$HOME/.ssh/deploy.key"
-          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/deploy.key"
-          git clone git@github.com:LeavesMC/Configuration.git configuration -b Leaves
-          cp run/leaves.yml configuration/leaves.yml -f
-          cd configuration
-          git add leaves.yml
-          git commit leaves.yml -m "$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          https://github.com/LeavesMC/Leaves/commit/$(cd .. && git rev-parse HEAD)"
-          git push origin HEAD:Leaves
-      - name: Get Release Info
-        run: bash scripts/GetReleaseInfo.sh
-        env:
-          BUILD_NUMBER: ${{ env.BUILD_NUMBER }}
-      - name: Upload Artifact
+          set -euo pipefail
+          mc_version=$(grep -E '^mcVersion=' gradle.properties | cut -d= -f2 | tr -d ' \r')
+          pre_version=$(grep -E '^preVersion=' gradle.properties | cut -d= -f2 | tr -d ' \r')
+          short_sha=$(git rev-parse --short=7 HEAD)
+          tag="${mc_version}-${GITHUB_RUN_NUMBER}-${short_sha}"
+          jar_name="leaves-${mc_version}.jar"
+          if [ "${pre_version:-false}" = "true" ]; then
+            prerelease=true
+          else
+            prerelease=false
+          fi
+
+          built=$(ls -1 leaves-server/build/libs/leaves-leavesclip-*.jar | head -n 1)
+          if [ -z "$built" ]; then
+            echo "::error::没有找到 leavesclip 产物"
+            exit 1
+          fi
+          cp "$built" "$jar_name"
+
+          {
+            echo "tag=$tag"
+            echo "jar=$jar_name"
+            echo "name=Leaves $tag"
+            echo "sha256=$(sha256sum "$jar_name" | cut -d' ' -f1)"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### 提交"
+            echo
+            git log -1 --pretty='- `%h` %s'
+            echo
+            echo "### 构建信息"
+            echo
+            echo "| 项目 | 值 |"
+            echo "| --- | --- |"
+            echo "| Minecraft | ${mc_version} |"
+            echo "| 构建号 | ${GITHUB_RUN_NUMBER} |"
+            echo "| 提交 | \`${short_sha}\` |"
+            echo "| 分支 | \`${GITHUB_REF_NAME}\` |"
+            echo "| Java | 25 |"
+            echo
+            echo "### 校验"
+            echo
+            echo '```'
+            echo "$(sha256sum "$jar_name")"
+            echo '```'
+          } > release-notes.md
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.jar }}
-          path: ${{ env.jar }}
+          name: ${{ steps.meta.outputs.jar }}
+          path: ${{ steps.meta.outputs.jar }}
+          if-no-files-found: error
+
       - name: Create Release
-        if: "!contains(github.event.commits[0].message, '[release-skip]')"
-        continue-on-error: true
-        uses: ncipollo/release-action@v1
+        if: github.event_name == 'push' || inputs.skip_release == false
+        uses: softprops/action-gh-release@v2
         with:
-          artifacts: ${{ env.jar }}
-          bodyFile: ${{ env.info }}
-          tag: ${{ env.tag }}
-          name: ${{ env.name }}
-          prerelease: ${{ env.pre }}
-          token: ${{ secrets.GITHUB_TOKEN }}
-          makeLatest: ${{ env.make_latest }}
-      - name: Github Releases To Discord
-        if: "!contains(github.event.commits[0].message, '[release-skip]')"
-        continue-on-error: true
-        uses: tsickert/discord-webhook@v6.0.0
-        with:
-          webhook-url: ${{ secrets.DISCORD_WEBHOOK }}
-          raw-data: ${{ env.discordmes }}
-      - name: Push to API
-        if: "!contains(github.event.commits[0].message, '[release-skip]')"
-        continue-on-error: true
-        env:
-          secret: ${{ secrets.API_PUSH_TOKEN }}
-          secret_v2: ${{ secrets.API_V2_PUSH_TOKEN }}
-          tag: ${{ env.tag }}
-        run: sh scripts/PushToAPI.sh
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.name }}
+          body_path: release-notes.md
+          files: ${{ steps.meta.outputs.jar }}
+          draft: false
+          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
+          make_latest: ${{ steps.meta.outputs.prerelease == 'false' }}
+          generate_release_notes: false

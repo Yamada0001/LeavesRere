@@ -13,6 +13,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -21,6 +22,7 @@ public class GlobalConfigManager {
     public final static String CONFIG_START = "settings.";
 
     private static final Map<String, VerifiedConfig> verifiedConfigs = new HashMap<>();
+    private static final Map<String, String[]> comments = new HashMap<>();
     private static final ConfigNode rootNode = new ConfigNode("");
 
     private static boolean loaded = false;
@@ -101,6 +103,14 @@ public class GlobalConfigManager {
             Object defValue = validator.saveConvert(field.get(upstreamField));
             LeavesConfig.config.addDefault(path, defValue);
 
+            String[] comment = globalConfig.comment();
+            if (comment.length > 0) {
+                // addDefault 登记的键在 section 里并不是真实存在的，Bukkit 保存时不会输出其注释，
+                // 这里用当前值把键物化一次，注释才能写进 leaves.yml。
+                LeavesConfig.config.set(path, LeavesConfig.config.get(path, defValue));
+                LeavesConfig.config.setComments(path, List.of(comment));
+            }
+
             try {
                 Object savedValue = LeavesConfig.config.get(path);
                 if (savedValue == null) {
@@ -116,6 +126,9 @@ public class GlobalConfigManager {
             }
 
             verifiedConfigs.put(path.substring(CONFIG_START.length()), verifiedConfig);
+            if (comment.length > 0) {
+                comments.put(path.substring(CONFIG_START.length()), comment);
+            }
             traverseToNodeOrCreate(path.substring(CONFIG_START.length()));
         } catch (Exception e) {
             LeavesLogger.LOGGER.error("Failure to load leaves config", e);
@@ -138,6 +151,16 @@ public class GlobalConfigManager {
 
     public static VerifiedConfig getVerifiedConfig(String path) {
         return verifiedConfigs.get(path);
+    }
+
+    @Nullable
+    public static String[] getComment(@NotNull String path) {
+        return comments.get(path);
+    }
+
+    @NotNull
+    public static Map<String, VerifiedConfig> getAllConfigs() {
+        return Collections.unmodifiableMap(verifiedConfigs);
     }
 
     private static class ConfigNode {

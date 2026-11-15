@@ -37,7 +37,6 @@ import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.projectile.ProjectileUtil;
 import net.minecraft.world.entity.vehicle.boat.AbstractBoat;
-import net.minecraft.world.inventory.ChestMenu;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.crafting.RecipeHolder;
 import net.minecraft.world.level.Level;
@@ -344,17 +343,33 @@ public class ServerBot extends ServerPlayer {
 
     @Override
     public @NotNull InteractionResult interact(@NotNull Player player, @NotNull InteractionHand hand, @NotNull net.minecraft.world.phys.Vec3 location) {
-        if (LeavesConfig.modify.fakeplayer.canOpenInventory) {
-            if (player instanceof ServerPlayer player1 && player.getMainHandItem().isEmpty()) {
-                BotInventoryOpenEvent event = new BotInventoryOpenEvent(this.getBukkitEntity(), player1.getBukkitEntity());
-                getServer().server.getPluginManager().callEvent(event);
-                if (!event.isCancelled()) {
-                    player.openMenu(new SimpleMenuProvider((i, inventory, p) -> ChestMenu.sixRows(i, inventory, this.container), this.getDisplayName()));
-                    return InteractionResult.SUCCESS;
-                }
-            }
+        if (player instanceof ServerPlayer player1 && player.getMainHandItem().isEmpty() && this.openInventory(player1)) {
+            return InteractionResult.SUCCESS;
         }
         return super.interact(player, hand, location);
+    }
+
+    /**
+     * 打开该假人的背包界面。
+     *
+     * <p>会先发出 {@link BotInventoryOpenEvent}，插件可拦截。空手右键假人与
+     * {@code /bot openinv} 命令走的是同一条路径，行为保持一致。</p>
+     *
+     * @param player 发起查看的玩家
+     * @return {@code true} 表示已成功打开（或被取消前已处理），{@code false} 表示未打开
+     */
+    public boolean openInventory(@NotNull ServerPlayer player) {
+        if (!LeavesConfig.modify.fakeplayer.canOpenInventory) {
+            return false;
+        }
+        BotInventoryOpenEvent event = new BotInventoryOpenEvent(this.getBukkitEntity(), player.getBukkitEntity());
+        getServer().server.getPluginManager().callEvent(event);
+        if (event.isCancelled()) {
+            return false;
+        }
+        player.openMenu(new SimpleMenuProvider(
+            (i, inventory, p) -> new BotInventoryMenu(i, inventory, this.container), this.getDisplayName()));
+        return true;
     }
 
     @Override

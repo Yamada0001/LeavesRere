@@ -8,6 +8,7 @@ import org.leavesmc.leaves.command.RootNode;
 import org.leavesmc.leaves.command.bot.subcommands.ActionCommand;
 import org.leavesmc.leaves.command.bot.subcommands.ConfigCommand;
 import org.leavesmc.leaves.command.bot.subcommands.CreateCommand;
+import org.leavesmc.leaves.command.bot.subcommands.InventoryCommand;
 import org.leavesmc.leaves.command.bot.subcommands.ListCommand;
 import org.leavesmc.leaves.command.bot.subcommands.LoadCommand;
 import org.leavesmc.leaves.command.bot.subcommands.RemoveCommand;
@@ -28,7 +29,8 @@ public class BotCommand extends RootNode {
             LoadCommand::new,
             SaveCommand::new,
             ActionCommand::new,
-            CreateCommand::new
+            CreateCommand::new,
+            InventoryCommand::new
         );
     }
 

@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.Collections;
+import java.util.List;
 
 import static org.leavesmc.leaves.config.GlobalConfigManager.CONFIG_START;
 
@@ -79,6 +80,12 @@ public class GlobalConfigCreator {
         try {
             VerifiedConfig verifiedConfig = VerifiedConfig.build(globalConfig, field, upstreamField, upstreamPath);
             config.set(verifiedConfig.path(), verifiedConfig.validator().saveConvert(field.get(upstreamField)));
+
+
+            String[] comment = globalConfig.comment();
+            if (comment.length > 0) {
+                config.setComments(verifiedConfig.path(), List.of(comment));
+            }
         } catch (Exception e) {
             e.printStackTrace();
         }

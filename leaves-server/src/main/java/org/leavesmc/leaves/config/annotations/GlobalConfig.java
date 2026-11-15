@@ -15,5 +15,12 @@ public @interface GlobalConfig {
 
     boolean lock() default false;
 
+    /**
+     * 写入 leaves.yml 的注释，按数组顺序逐行输出在该配置项上方。
+     *
+     * <p>留空表示不写注释。</p>
+     */
+    String[] comment() default {};
+
     Class<? extends ConfigValidator<?>> validator() default AutoConfigValidator.class;
 }
