@@ -42,7 +42,7 @@ index 8ce8de8eedfe8557848b0508857744a5b9641239..ec8b215ce307725e465d5f5d75eeeca3
 +                acceptsAll(asList("leaves", "leaves-settings"), "File for leaves settings")
 +                        .withRequiredArg()
 +                        .ofType(File.class)
-+                        .defaultsTo(new File("leaves.yml"))
++                        .defaultsTo(new File("config", "leaves.yml"))
 +                        .describedAs("Yml file");
 +                // Leaves end - Server Config
              }

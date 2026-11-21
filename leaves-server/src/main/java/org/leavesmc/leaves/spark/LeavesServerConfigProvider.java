@@ -108,7 +108,8 @@ public class LeavesServerConfigProvider extends ServerConfigProvider {
             .put("bukkit.yml", YamlConfigParser.INSTANCE)
             .put("spigot.yml", YamlConfigParser.INSTANCE)
             .put("paper/", SplitYamlConfigParser.INSTANCE)
-            .put("leaves.yml", YamlConfigParser.INSTANCE);
+            .put("config/leaves.yml", YamlConfigParser.INSTANCE)
+            .put("config/SnowBall.yml", YamlConfigParser.INSTANCE);
 
         for (String config : getSystemPropertyList("spark.serverconfigs.extra")) {
             files.put(config, YamlConfigParser.INSTANCE);

@@ -4,7 +4,9 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.storage.LevelStorageSource;
 import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
+import org.leavesmc.leaves.LeavesConfig;
 import org.leavesmc.leaves.LeavesLogger;
+import org.leavesmc.leaves.config.GlobalConfigFiles;
 import org.leavesmc.leaves.region.blinear.data.BufferedLinearRegionFile;
 import org.leavesmc.leaves.region.blinear.data.BufferedLinearRegionFileFlusher;
 
@@ -40,16 +42,12 @@ public class LinearMigration {
             scan(world, linearFiles);
         }
 
-        YamlConfiguration config = new YamlConfiguration();
+        YamlConfiguration config;
         try {
-            if (configFile.isFile()) {
-                config.load(configFile);
-            }
+            configFile = GlobalConfigFiles.prepareLeavesFile(configFile);
+            config = GlobalConfigFiles.read(configFile.toPath(), LeavesConfig.CONFIG_HEADER);
         } catch (InvalidConfigurationException e) {
-            if (linearFiles.isEmpty()) {
-                return true;
-            }
-            LeavesLogger.LOGGER.error("Failed to read {}, can not convert Linear region files", configFile, e);
+            LeavesLogger.LOGGER.error("Failed to read Leaves configuration {} before checking Linear region files", configFile, e);
             return false;
         }
 

@@ -1,150 +1,148 @@
 package org.leavesmc.leaves.config;
 
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 import org.leavesmc.leaves.LeavesConfig;
 import org.leavesmc.leaves.LeavesLogger;
 import org.leavesmc.leaves.config.annotations.GlobalConfig;
 import org.leavesmc.leaves.config.annotations.GlobalConfigCategory;
 import org.leavesmc.leaves.config.annotations.TransferConfig;
-import org.leavesmc.leaves.config.api.ConfigValidator;
 
+import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
+import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-public class GlobalConfigManager {
+public final class GlobalConfigManager {
+    public static final String CONFIG_START = "settings.";
 
-    public final static String CONFIG_START = "settings.";
+    private static Map<String, VerifiedConfig> verifiedConfigs = Map.of();
+    private static final Map<String, Object> defaults = new LinkedHashMap<>();
 
-    private static final Map<String, VerifiedConfig> verifiedConfigs = new HashMap<>();
-    private static final Map<String, String[]> comments = new HashMap<>();
-    private static final ConfigNode rootNode = new ConfigNode("");
-
-    private static boolean loaded = false;
-
-    public static void init() {
-        if (loaded) {
-            return;
-        }
-
-        for (Field field : LeavesConfig.class.getDeclaredFields()) {
-            initField(field, null, CONFIG_START);
-        }
-        verifiedConfigs.values().forEach(config -> config.validator().runAfterLoader(config.get(), false));
-        clearRemovedConfig();
-        LeavesConfig.save();
-
-        loaded = true;
+    private GlobalConfigManager() {
     }
 
-    public static void reload() {
-        if (!loaded) {
-            return;
-        }
-
-        for (Field field : LeavesConfig.class.getDeclaredFields()) {
-            initField(field, null, CONFIG_START);
-        }
-        verifiedConfigs.values().stream().filter(config -> !config.lock()).forEach(config -> config.validator().runAfterLoader(config.get(), true));
-        clearRemovedConfig();
-        LeavesConfig.save();
+    public static void init(GlobalConfigFiles files) throws IOException {
+        load(files, false);
     }
 
-    private static void initField(@NotNull Field field, @Nullable Object upstreamField, @NotNull String upstreamPath) {
-        if (upstreamField != null || Modifier.isStatic(field.getModifiers())) {
-            field.setAccessible(true);
-
-            for (TransferConfig config : field.getAnnotationsByType(TransferConfig.class)) {
-                VerifiedTransferConfig.build(config, field, upstreamField).run();
-            }
-
-            GlobalConfig globalConfig = field.getAnnotation(GlobalConfig.class);
-            if (globalConfig != null) {
-                initConfig(field, globalConfig, upstreamField, upstreamPath);
-                return;
-            }
-
-            GlobalConfigCategory globalCategory = field.getType().getAnnotation(GlobalConfigCategory.class);
-            if (globalCategory != null) {
-                initCategory(field, globalCategory, upstreamField, upstreamPath);
-            }
-        }
+    public static void reload(GlobalConfigFiles files) throws IOException {
+        load(files, true);
     }
 
-    private static void initCategory(@NotNull Field categoryField, @NotNull GlobalConfigCategory globalCategory, @Nullable Object upstreamField, @NotNull String upstreamPath) {
-        try {
-            Object category = categoryField.get(upstreamField);
-            String categoryPath = upstreamPath + globalCategory.value() + ".";
-            for (Field field : categoryField.getType().getDeclaredFields()) {
-                initField(field, category, categoryPath);
-            }
-            traverseToNodeOrCreate(categoryPath.substring(CONFIG_START.length()));
-        } catch (Exception e) {
-            LeavesLogger.LOGGER.error("Failure to load leaves config {}", upstreamPath, e);
-        }
+    private static void load(GlobalConfigFiles files, boolean reload) throws IOException {
+        load(files, entries(files), reload);
     }
 
-    private static void initConfig(@NotNull Field field, GlobalConfig globalConfig, @Nullable Object upstreamField, @NotNull String upstreamPath) {
-        try {
-            if (loaded && globalConfig.lock()) {
-                return;
+    static void load(GlobalConfigFiles files, List<VerifiedConfig> entries, boolean reload) throws IOException {
+        files.migrate(entries.stream().filter(VerifiedConfig::snowball).map(VerifiedConfig::path).toList());
+        Map<String, VerifiedConfig> verified = new LinkedHashMap<>();
+        if (!reload) {
+            defaults.clear();
+            for (VerifiedConfig entry : entries) {
+                defaults.put(entry.path(), entry.validator().saveConvert(entry.get()));
             }
-
-            VerifiedConfig verifiedConfig = VerifiedConfig.build(globalConfig, field, upstreamField, upstreamPath);
-
-            ConfigValidator<? super Object> validator = verifiedConfig.validator();
-            String path = verifiedConfig.path();
-
-            Object defValue = validator.saveConvert(field.get(upstreamField));
-            LeavesConfig.config.addDefault(path, defValue);
-
-            String[] comment = globalConfig.comment();
-            if (comment.length > 0) {
-                // addDefault 登记的键在 section 里并不是真实存在的，Bukkit 保存时不会输出其注释，
-                // 这里用当前值把键物化一次，注释才能写进 leaves.yml。
-                LeavesConfig.config.set(path, LeavesConfig.config.get(path, defValue));
-                LeavesConfig.config.setComments(path, List.of(comment));
+        }
+        for (VerifiedConfig entry : entries) {
+            loadValue(entry, files.leaves(), defaults.get(entry.path()), reload);
+            verified.put(entry.path().substring(CONFIG_START.length()), entry);
+        }
+        prune(files.leaves(), entries, false);
+        prune(files.snowball(), entries, true);
+        for (VerifiedConfig entry : entries) {
+            if (!reload || !entry.lock()) {
+                entry.validator().runAfterLoader(entry.get(), reload);
             }
+        }
+        files.save();
+        verifiedConfigs = Collections.unmodifiableMap(verified);
+    }
 
-            try {
-                Object savedValue = LeavesConfig.config.get(path);
-                if (savedValue == null) {
-                    throw new IllegalArgumentException("?");
+    private static void loadValue(VerifiedConfig entry, YamlConfiguration legacy, Object defaultValue, boolean reload) {
+        String path = entry.path();
+        YamlConfiguration yaml = entry.configuration();
+        boolean apply = !reload || !entry.lock();
+        if (apply && !yaml.contains(path, true)) {
+            for (TransferConfig transfer : entry.field().getAnnotationsByType(TransferConfig.class)) {
+                if (VerifiedTransferConfig.build(transfer, entry.field(), entry.upstreamField()).run(legacy, yaml, path, entry.validator())) {
+                    break;
                 }
-
-                savedValue = validator.loadConvert(savedValue);
-                validator.verify(null, savedValue);
-                field.set(upstreamField, savedValue);
-            } catch (IllegalArgumentException | ClassCastException e) {
-                LeavesConfig.config.set(path, defValue);
-                LeavesLogger.LOGGER.warn("{}, reset to {}", e.getMessage(), defValue);
             }
-
-            verifiedConfigs.put(path.substring(CONFIG_START.length()), verifiedConfig);
-            if (comment.length > 0) {
-                comments.put(path.substring(CONFIG_START.length()), comment);
-            }
-            traverseToNodeOrCreate(path.substring(CONFIG_START.length()));
-        } catch (Exception e) {
-            LeavesLogger.LOGGER.error("Failure to load leaves config", e);
-            throw new RuntimeException();
         }
+        if (!yaml.contains(path, true)) {
+            yaml.set(path, defaultValue);
+        }
+        if (apply) {
+            try {
+                Object value = entry.validator().loadConvert(yaml.get(path));
+                entry.validator().verify(null, value);
+                entry.field().set(entry.upstreamField(), value);
+            } catch (IllegalArgumentException | ClassCastException e) {
+                yaml.set(path, defaultValue);
+                try {
+                    entry.field().set(entry.upstreamField(), entry.validator().loadConvert(defaultValue));
+                } catch (IllegalAccessException impossible) {
+                    throw new IllegalStateException("Cannot reset " + path, impossible);
+                }
+                LeavesLogger.LOGGER.warn("{}, reset to {}", e.getMessage(), defaultValue);
+            } catch (IllegalAccessException e) {
+                throw new IllegalStateException("Cannot load " + path, e);
+            }
+        }
+        GlobalConfigFiles.addDefaultComments(yaml, path, entry.field().getAnnotation(GlobalConfig.class));
     }
 
-    private static void clearRemovedConfig() {
-        for (String key : LeavesConfig.config.getKeys(true)) {
-            if (!key.startsWith(CONFIG_START) || key.equals(CONFIG_START)) {
+    static List<VerifiedConfig> entries(GlobalConfigFiles files) {
+        List<VerifiedConfig> entries = new ArrayList<>();
+        collectEntries(LeavesConfig.class, null, CONFIG_START, files, entries);
+        return entries;
+    }
+
+    private static void collectEntries(Class<?> categoryType, Object parent, String prefix, GlobalConfigFiles files, List<VerifiedConfig> entries) {
+        for (Field field : categoryType.getDeclaredFields()) {
+            if (parent == null && !Modifier.isStatic(field.getModifiers())) {
                 continue;
             }
+            GlobalConfig config = field.getAnnotation(GlobalConfig.class);
+            GlobalConfigCategory category = field.getType().getAnnotation(GlobalConfigCategory.class);
+            if (config == null && category == null) {
+                continue;
+            }
+            field.setAccessible(true);
+            if (config != null) {
+                entries.add(VerifiedConfig.build(config, field, parent, prefix, files));
+            } else {
+                try {
+                    collectEntries(field.getType(), field.get(parent), prefix + category.value() + ".", files, entries);
+                } catch (IllegalAccessException e) {
+                    throw new IllegalStateException("Cannot load configuration category " + prefix + category.value(), e);
+                }
+            }
+        }
+    }
 
-            String keyWithoutPrefix = key.substring(CONFIG_START.length());
-            if (!verifiedConfigs.containsKey(keyWithoutPrefix) && getVerifiedConfigSubPaths(keyWithoutPrefix + ".").isEmpty()) {
-                LeavesConfig.config.set(key, null);
+    private static void prune(YamlConfiguration yaml, List<VerifiedConfig> entries, boolean snowball) {
+        Set<String> known = new LinkedHashSet<>();
+        for (VerifiedConfig entry : entries) {
+            if (entry.snowball() != snowball) {
+                continue;
+            }
+            String path = entry.path();
+            known.add(path);
+            while (path.contains(".")) {
+                path = path.substring(0, path.lastIndexOf('.'));
+                known.add(path);
+            }
+        }
+        for (String path : yaml.getKeys(true)) {
+            if (path.startsWith(CONFIG_START) && !known.contains(path)) {
+                yaml.set(path, null);
             }
         }
     }
@@ -153,59 +151,16 @@ public class GlobalConfigManager {
         return verifiedConfigs.get(path);
     }
 
-    @Nullable
-    public static String[] getComment(@NotNull String path) {
-        return comments.get(path);
-    }
-
     @NotNull
-    public static Map<String, VerifiedConfig> getAllConfigs() {
-        return Collections.unmodifiableMap(verifiedConfigs);
-    }
-
-    private static class ConfigNode {
-        String name;
-        Map<String, ConfigNode> children;
-
-        public ConfigNode(String name) {
-            this.name = name;
-            this.children = new HashMap<>();
-        }
-    }
-
-    private static void traverseToNodeOrCreate(@NotNull String path) {
-        String[] parts = path.split("\\.");
-        ConfigNode current = rootNode;
-
-        for (String part : parts) {
-            if (!part.isEmpty()) {
-                current = current.children.computeIfAbsent(part, ConfigNode::new);
+    public static Set<String> getVerifiedConfigSubPaths(@NotNull String path) {
+        String prefix = path.substring(0, path.lastIndexOf('.') + 1);
+        Set<String> children = new LinkedHashSet<>();
+        for (String key : verifiedConfigs.keySet()) {
+            if (key.startsWith(prefix)) {
+                String suffix = key.substring(prefix.length());
+                children.add(suffix.substring(0, suffix.indexOf('.') < 0 ? suffix.length() : suffix.indexOf('.')));
             }
         }
-    }
-
-    @Nullable
-    private static ConfigNode traverseToNode(@NotNull String path) {
-        int index = path.lastIndexOf('.');
-        String[] parts = index == -1 ? new String[0] : path.substring(0, index).split("\\.");
-
-        ConfigNode current = rootNode;
-        for (String part : parts) {
-            current = current.children.get(part);
-            if (current == null) {
-                return null;
-            }
-        }
-
-        return current;
-    }
-
-    @NotNull
-    public static Set<String> getVerifiedConfigSubPaths(@NotNull String prefix) {
-        ConfigNode current = traverseToNode(prefix);
-        if (current == null) {
-            return Collections.emptySet();
-        }
-        return current.children.keySet();
+        return children;
     }
 }

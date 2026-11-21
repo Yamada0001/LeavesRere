@@ -7,8 +7,8 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.player.Player;
 import org.bukkit.Bukkit;
+import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.MemorySection;
-import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.permissions.Permission;
 import org.bukkit.permissions.PermissionDefault;
 import org.bukkit.plugin.PluginManager;
@@ -17,6 +17,7 @@ import org.leavesmc.leaves.bot.BotList;
 import org.leavesmc.leaves.bot.ServerBot;
 import org.leavesmc.leaves.command.bot.BotCommand;
 import org.leavesmc.leaves.command.leaves.LeavesCommand;
+import org.leavesmc.leaves.config.GlobalConfigFiles;
 import org.leavesmc.leaves.config.GlobalConfigManager;
 import org.leavesmc.leaves.config.annotations.GlobalConfig;
 import org.leavesmc.leaves.config.annotations.GlobalConfigCategory;
@@ -49,8 +50,8 @@ import org.leavesmc.leaves.util.VillagerInfiniteDiscountHelper;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Random;
 import java.util.function.Predicate;
@@ -61,61 +62,27 @@ public final class LeavesConfig {
     public static final String CONFIG_HEADER = "Configuration file for Leaves.";
     public static final int CURRENT_CONFIG_VERSION = 6;
 
-    private static File configFile;
-    public static YamlConfiguration config;
+    private static GlobalConfigFiles configFiles;
 
     public static void init(final @NotNull File file) {
-        LeavesConfig.configFile = file;
-        config = new YamlConfiguration();
-        config.options().setHeader(Collections.singletonList(CONFIG_HEADER));
-        config.options().copyDefaults(true);
-
-        if (!file.exists()) {
-            try {
-                boolean is = file.createNewFile();
-                if (!is) {
-                    throw new IOException("Can't create file");
-                }
-            } catch (final Exception ex) {
-                LeavesLogger.LOGGER.error("Failure to create leaves config", ex);
-            }
-        } else {
-            try {
-                config.load(file);
-            } catch (final Exception ex) {
-                LeavesLogger.LOGGER.error("Failure to load leaves config", ex);
-                throw new RuntimeException(ex);
-            }
+        try {
+            File leavesFile = GlobalConfigFiles.prepareLeavesFile(file);
+            configFiles = GlobalConfigFiles.load(leavesFile.toPath(), Path.of("config", GlobalConfigFiles.SNOWBALL_FILE));
+            GlobalConfigManager.init(configFiles);
+        } catch (IOException | InvalidConfigurationException e) {
+            throw new IllegalStateException("Unable to load Leaves and SnowBall configuration files", e);
         }
-
-        LeavesConfig.config.set("config-version", CURRENT_CONFIG_VERSION);
-        LeavesConfig.config.setComments("config-version", Collections.singletonList("Leaves 配置文件版本号。请勿修改！"));
-
-        GlobalConfigManager.init();
 
         LeavesCommand.INSTANCE.register();
     }
 
     public static void reload() {
-        if (!LeavesConfig.configFile.exists()) {
-            throw new RuntimeException("Leaves config file not found, please restart the server");
-        }
-
         try {
-            config.load(LeavesConfig.configFile);
-        } catch (final Exception ex) {
-            LeavesLogger.LOGGER.error("Failure to reload leaves config", ex);
-            throw new RuntimeException(ex);
-        }
-
-        GlobalConfigManager.reload();
-    }
-
-    public static void save() {
-        try {
-            config.save(LeavesConfig.configFile);
-        } catch (final Exception ex) {
-            LeavesLogger.LOGGER.error("Unable to save leaves config", ex);
+            GlobalConfigFiles updated = GlobalConfigFiles.load(configFiles.leavesPath(), configFiles.snowballPath());
+            GlobalConfigManager.reload(updated);
+            configFiles = updated;
+        } catch (IOException | InvalidConfigurationException e) {
+            throw new IllegalStateException("Unable to reload Leaves and SnowBall configuration files", e);
         }
     }
 
@@ -194,7 +161,7 @@ public final class LeavesConfig {
             })
             public boolean canOpenInventory = false;
 
-            @GlobalConfig(value = "fakeplayer-inventory-gui-buttons", comment = {
+            @GlobalConfig(value = "fakeplayer-inventory-gui-buttons", snowball = true, comment = {
                 "打开假人背包后，在界面中额外显示可点击的功能按钮。槽位 0 为停止假人当前动作，槽位 5 为交换主副手，",
                 "槽位 8 为丢弃快捷栏当前选中的物品。关闭时这些位置只是占位符，点击无效。"
             })
@@ -697,14 +664,14 @@ public final class LeavesConfig {
             public boolean sameNbtStackable = false;
         }
 
-        @GlobalConfig(value = "allow-grindstone-overstacking", comment = {
+        @GlobalConfig(value = "allow-grindstone-overstacking", snowball = true, comment = {
             "允许砂轮处理与产出超过常规堆叠数量的物品。开启后砂轮要求输入数量不超过 1 的限制被放开，合并时按两边实际数量相加，",
             "上限取该物品的堆叠上限（包含 shulker-box、",
             "curse-enchanted-book-stack-size 等超堆叠设定）。关闭时行为与原版完全一致。"
         })
         public boolean allowGrindstoneOverstacking = false;
 
-        @GlobalConfig(value = "curse-enchanted-book-stack-size", validator = CurseEnchantedBookValidator.class, comment = {
+        @GlobalConfig(value = "curse-enchanted-book-stack-size", snowball = true, validator = CurseEnchantedBookValidator.class, comment = {
             "带诅咒附魔的附魔书的最大堆叠数量。设为 1 或 false 表示不启用。仅当物品为附魔书且至少带一个诅咒附魔时生效；",
             "附魔与其它组件完全相同的两本才会叠在一起。取值范围 1-99。"
         })
@@ -1060,7 +1027,7 @@ public final class LeavesConfig {
          *
          * <p>移植自 Leavesaddmore 的 Large barrel（原作者 silentqaq，经授权）。</p>
          */
-        @GlobalConfig(value = "large-barrel", comment = {
+        @GlobalConfig(value = "large-barrel", snowball = true, comment = {
             "单个木桶直接拥有 6 行（54 格）容量，不需要两个木桶背靠背摆放。容器大小在木桶方块实体创建时确定，",
             "漏斗与比较器读取的就是这个容器本身。注意：容器大小决定存档槽位数，开启后若物品存在于第 27 格之后，",
             "关闭此配置再加载世界时这些物品会被丢弃。"
@@ -1073,7 +1040,7 @@ public final class LeavesConfig {
          * <p>注意：末影箱内容存在玩家数据里。开启后存到第 27 格之后的物品，
          * 在关闭此配置后该玩家再次加载时会丢失，属于不可逆的存档变更。</p>
          */
-        @GlobalConfig(value = "large-ender-chest", comment = {
+        @GlobalConfig(value = "large-ender-chest", snowball = true, comment = {
             "每个玩家的末影箱拥有 6 行（54 格）容量。注意：末影箱内容保存在玩家数据中，开启后存到第 27 格之后的物品，",
             "在关闭此配置后该玩家再次加载时会丢失，属于不可逆的存档变更。"
         })
@@ -1140,7 +1107,7 @@ public final class LeavesConfig {
          *
          * <p>移植自 mcm-rabbit-pathfinding-fix（Apache-2.0）的 PathNavigation 部分。</p>
          */
-        @GlobalConfig(value = "path-navigation-timeout-fix", comment = {
+        @GlobalConfig(value = "path-navigation-timeout-fix", snowball = true, comment = {
             "修复生物移动速度为 0 时寻路永远不会超时的问题。"
         })
         public boolean pathNavigationTimeoutFix = true;
@@ -1154,7 +1121,7 @@ public final class LeavesConfig {
          *
          * <p>移植自 StructureLayoutOptimizer（MIT）。</p>
          */
-        @GlobalConfig(value = "structure-layout-optimizer", comment = {
+        @GlobalConfig(value = "structure-layout-optimizer", snowball = true, comment = {
             "优化拼图（jigsaw）结构的布局计算，减少生成结构时的重复运算。"
         })
         public boolean structureLayoutOptimizer = false;
@@ -1167,7 +1134,7 @@ public final class LeavesConfig {
          *
          * <p>移植自 StructureLayoutOptimizer（MIT）。</p>
          */
-        @GlobalConfig(value = "structure-layout-deduplicate-template-pool", comment = {
+        @GlobalConfig(value = "structure-layout-deduplicate-template-pool", snowball = true, comment = {
             "对结构模板池做去重，降低结构生成相关的内存占用。"
         })
         public boolean structureLayoutDeduplicateTemplatePool = false;
@@ -1182,7 +1149,7 @@ public final class LeavesConfig {
          *
          * <p>移植自 Bellows（MIT）。需重启生效。</p>
          */
-        @GlobalConfig(value = "bellows-nbt-optimizations", lock = true, comment = {
+        @GlobalConfig(value = "bellows-nbt-optimizations", snowball = true, lock = true, comment = {
             "启用 NBT 读写路径的优化，减少临时对象分配。"
         })
         public boolean bellowsNbtOptimizations = false;
@@ -1197,7 +1164,7 @@ public final class LeavesConfig {
          *
          * <p>移植自 Bellows（MIT）。需重启生效。</p>
          */
-        @GlobalConfig(value = "bellows-selector-optimizations", lock = true, comment = {
+        @GlobalConfig(value = "bellows-selector-optimizations", snowball = true, lock = true, comment = {
             "优化命令选择器（selector）的解析与匹配过程。"
         })
         public boolean bellowsSelectorOptimizations = false;
@@ -1207,7 +1174,7 @@ public final class LeavesConfig {
          *
          * <p>纯算力优化，无可观测行为差异。移植自 Bellows（MIT）。需重启生效。</p>
          */
-        @GlobalConfig(value = "bellows-skip-server-culling", lock = true, comment = {
+        @GlobalConfig(value = "bellows-skip-server-culling", snowball = true, lock = true, comment = {
             "跳过服务端多余的可见性剔除计算。"
         })
         public boolean bellowsSkipServerCulling = false;
@@ -1221,7 +1188,7 @@ public final class LeavesConfig {
          *
          * <p>移植自 FerriteCore（MIT）。需重启生效。</p>
          */
-        @GlobalConfig(value = "ferrite-blockstate-dedup", lock = true, comment = {
+        @GlobalConfig(value = "ferrite-blockstate-dedup", snowball = true, lock = true, comment = {
             "对方块状态（BlockState）做去重，降低其内存占用。"
         })
         public boolean ferriteBlockstateDedup = false;
@@ -1234,7 +1201,7 @@ public final class LeavesConfig {
          *
          * <p>移植自 FerriteCore（MIT）。需重启生效。</p>
          */
-        @GlobalConfig(value = "ferrite-component-patch-shrink", lock = true, comment = {
+        @GlobalConfig(value = "ferrite-component-patch-shrink", snowball = true, lock = true, comment = {
             "压缩数据组件补丁（DataComponentPatch）的存储结构，减少内存占用。"
         })
         public boolean ferriteComponentPatchShrink = false;
@@ -1248,7 +1215,7 @@ public final class LeavesConfig {
          *
          * <p>移植自 RailOptimization（GPL-3.0）。</p>
          */
-        @GlobalConfig(value = "optimize-powered-rail", comment = {
+        @GlobalConfig(value = "optimize-powered-rail", snowball = true, comment = {
             "优化动力铁轨的更新逻辑，减少不必要的方块更新。"
         })
         public boolean optimizePoweredRail = false;
@@ -1259,7 +1226,7 @@ public final class LeavesConfig {
          * <p>仅在 {@link #optimizePoweredRail} 开启时生效。原版行为等价于不限步数，
          * 因此该值调得过小会让长距离铁轨失去供电。</p>
          */
-        @GlobalConfig(value = "rail-power-limit", comment = {
+        @GlobalConfig(value = "rail-power-limit", snowball = true, comment = {
             "动力铁轨单次最多推动的矿车数量上限。"
         })
         public int railPowerLimit = 8;
@@ -1274,7 +1241,7 @@ public final class LeavesConfig {
          *
          * <p>移植自 Oushii（GPL-3.0）。</p>
          */
-        @GlobalConfig(value = "explosion-engine", comment = {
+        @GlobalConfig(value = "explosion-engine", snowball = true, comment = {
             "启用替代的爆炸计算引擎，替换原版爆炸逻辑。"
         })
         public boolean explosionEngine = false;
@@ -1283,7 +1250,7 @@ public final class LeavesConfig {
          * 同 tick 内相距该半径（格）以内的爆炸合并为一次求解，{@code <= 0} 关闭合并。
          * 仅在 {@link #explosionEngine} 开启时生效，上限 20。
          */
-        @GlobalConfig(value = "explosion-engine-cluster-radius", comment = {
+        @GlobalConfig(value = "explosion-engine-cluster-radius", snowball = true, comment = {
             "爆炸引擎将邻近方块聚类处理的半径（单位：格）。"
         })
         public double explosionEngineClusterRadius = 4.0;
@@ -1292,7 +1259,7 @@ public final class LeavesConfig {
          * 单次爆炸最多引燃的 TNT 实体数，防止连锁爆炸演变成实体风暴。
          * 仅在 {@link #explosionEngine} 开启时生效，范围 1–256。
          */
-        @GlobalConfig(value = "explosion-engine-max-primed", comment = {
+        @GlobalConfig(value = "explosion-engine-max-primed", snowball = true, comment = {
             "爆炸引擎单次同时处理的最大 TNT 实体数量。"
         })
         public int explosionEngineMaxPrimed = 64;
@@ -1305,7 +1272,7 @@ public final class LeavesConfig {
          *
          * <p>移植自 ModernFix（LGPL-3.0）。</p>
          */
-        @GlobalConfig(value = "modernfix-cache-strongholds", comment = {
+        @GlobalConfig(value = "modernfix-cache-strongholds", snowball = true, comment = {
             "缓存要塞环（stronghold ring）的位置，避免重复计算。"
         })
         public boolean modernfixCacheStrongholds = false;
@@ -1318,7 +1285,7 @@ public final class LeavesConfig {
          *
          * <p>移植自 ModernFix（LGPL-3.0）。</p>
          */
-        @GlobalConfig(value = "modernfix-dfu", comment = {
+        @GlobalConfig(value = "modernfix-dfu", snowball = true, comment = {
             "优化 DataFixerUpper 的加载与查询路径。"
         })
         public boolean modernfixDfu = false;
@@ -1330,7 +1297,7 @@ public final class LeavesConfig {
          *
          * <p>移植自 ModernFix（LGPL-3.0）。</p>
          */
-        @GlobalConfig(value = "modernfix-dedup-wall-shapes", comment = {
+        @GlobalConfig(value = "modernfix-dedup-wall-shapes", snowball = true, comment = {
             "对墙类方块（wall）的形状数据做去重。"
         })
         public boolean modernfixDedupWallShapes = false;
@@ -1340,7 +1307,7 @@ public final class LeavesConfig {
          *
          * <p>移植自 ModernFix（LGPL-3.0）。</p>
          */
-        @GlobalConfig(value = "modernfix-attribute-supplier-dedup", comment = {
+        @GlobalConfig(value = "modernfix-attribute-supplier-dedup", snowball = true, comment = {
             "对属性（Attribute）供应器做去重。"
         })
         public boolean modernfixAttributeSupplierDedup = false;
@@ -1353,7 +1320,7 @@ public final class LeavesConfig {
          *
          * <p>移植自 ModernFix（LGPL-3.0）。</p>
          */
-        @GlobalConfig(value = "modernfix-dedup-climate-parameters", comment = {
+        @GlobalConfig(value = "modernfix-dedup-climate-parameters", snowball = true, comment = {
             "对生物群系气候参数做去重。"
         })
         public boolean modernfixDedupClimateParameters = false;
@@ -1364,7 +1331,7 @@ public final class LeavesConfig {
          * <p><b>语义变更</b>：会跳过一部分原本执行的条件判定，依赖「边持有边消耗」
          * 累积语义的自定义进度可能延迟触发。移植自 Cerulean（经原作者授权）。</p>
          */
-        @GlobalConfig(value = "cerulean-skip-ticks", comment = {
+        @GlobalConfig(value = "cerulean-skip-ticks", snowball = true, comment = {
             "跳过未发生变化的容器的 tick 处理。"
         })
         public boolean ceruleanSkipTicks = false;
@@ -1375,7 +1342,7 @@ public final class LeavesConfig {
          * <p><b>语义变更</b>：变空不可能满足「持有某物」类条件，但若自定义进度把
          * 「数量降到 0」当作有效条件，会被漏掉。</p>
          */
-        @GlobalConfig(value = "cerulean-ignore-emptied-stacks", comment = {
+        @GlobalConfig(value = "cerulean-ignore-emptied-stacks", snowball = true, comment = {
             "忽略被清空的物品栈所触发的容器变更通知。"
         })
         public boolean ceruleanIgnoreEmptiedStacks = false;
@@ -1385,7 +1352,7 @@ public final class LeavesConfig {
          *
          * <p><b>语义变更</b>：减少不可能跨过「至少 N 个」的下界，但消耗类进度会受影响。</p>
          */
-        @GlobalConfig(value = "cerulean-ignore-decreased-stacks", comment = {
+        @GlobalConfig(value = "cerulean-ignore-decreased-stacks", snowball = true, comment = {
             "忽略数量减少的物品栈所触发的容器变更通知。"
         })
         public boolean ceruleanIgnoreDecreasedStacks = false;
@@ -1396,7 +1363,7 @@ public final class LeavesConfig {
          *
          * <p>纯开销优化，不改变最终可见的进度状态。</p>
          */
-        @GlobalConfig(value = "cerulean-init-last-slots", comment = {
+        @GlobalConfig(value = "cerulean-init-last-slots", snowball = true, comment = {
             "预填充最后几个槽位的比对缓存，减少首次比较开销。"
         })
         public boolean ceruleanInitLastSlots = false;
@@ -1810,16 +1777,21 @@ public final class LeavesConfig {
             }
 
             @GlobalConfig(value = "download-source", lock = true, validator = DownloadSourceValidator.class, comment = {
-                "指定自动更新下载源。 application GitHub Releases rainyun 雨云提供的镜像下载源"
+                "指定自动更新下载源。 GitHub Releases: " + LeavesUpdateHelper.DOWNLOAD_REPOSITORY
             })
-            public String source = "application";
+            public String source = LeavesUpdateHelper.DOWNLOAD_REPOSITORY;
 
             public static class DownloadSourceValidator extends StringConfigValidator {
-                private static final List<String> suggestSourceList = List.of("application", "cloud");
+                @Override
+                public void verify(String old, String value) {
+                    if (!LeavesUpdateHelper.DOWNLOAD_REPOSITORY.equals(value)) {
+                        throw new IllegalArgumentException("Unsupported auto-update source");
+                    }
+                }
 
                 @Override
                 public List<String> valueSuggest() {
-                    return suggestSourceList;
+                    return List.of(LeavesUpdateHelper.DOWNLOAD_REPOSITORY);
                 }
             }
 
@@ -1891,7 +1863,7 @@ public final class LeavesConfig {
         @GlobalConfig(value = "server-lang", lock = true, validator = ServerLangValidator.class, comment = {
             "指定服务端的语言。 en_us 英语（美国） zh_cn 简体中文（中国）"
         })
-        public String serverLang = "en_us";
+        public String serverLang = "zh_cn";
 
         private static class ServerLangValidator extends StringConfigValidator {
             private static final List<String> supportLang = new ArrayList<>(List.of("en_us"));
@@ -1916,7 +1888,7 @@ public final class LeavesConfig {
         @GlobalConfig(value = "server-mod-name", comment = {
             "指定服务端名称。"
         })
-        public String serverModName = "Leaves";
+        public String serverModName = "SnowBall";
 
         @GlobalConfig(value = "bstats-privacy-mode", comment = {
             "是否开启 bStats 隐私模式。开启后，Leaves 将停止收集服务端版本、游玩人数、Java 版本等用户信息。"
@@ -2052,13 +2024,13 @@ public final class LeavesConfig {
         })
         public boolean stackedContainerDestroyedDrop = true;
 
-        @GlobalConfig(value = "spear-charge-contact-cooldown", comment = {
+        @GlobalConfig(value = "spear-charge-contact-cooldown", snowball = true, comment = {
             "长矛冲锋仅在满足伤害、击退或下马条件时记入接触冷却；只扫到目标不再提前触发冷却。",
             "不改变原版速度门槛、接触冷却时长或实体受伤后的无敌时间。"
         })
         public boolean spearChargeContactCooldown = false;
 
-        @GlobalConfig(value = "spear-charge-dragon-hit-part", comment = {
+        @GlobalConfig(value = "spear-charge-dragon-hit-part", snowball = true, comment = {
             "长矛冲锋按实际命中的末影龙部位结算伤害，仍按龙本体计算接触冷却。",
             "头部和颈部不受躯干部位减伤；保留原版阶段、伤害事件及其余部位的减伤规则。"
         })

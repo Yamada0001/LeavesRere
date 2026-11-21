@@ -1,17 +1,22 @@
 package org.leavesmc.leaves.config;
 
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.leavesmc.leaves.LeavesConfig;
 import org.leavesmc.leaves.LeavesLogger;
 import org.leavesmc.leaves.config.annotations.GlobalConfig;
 import org.leavesmc.leaves.config.api.ConfigValidator;
 import org.leavesmc.leaves.config.api.impl.AutoConfigValidator;
 
+import java.io.IOException;
 import java.lang.reflect.Field;
 
-public record VerifiedConfig(ConfigValidator<? super Object> validator, boolean lock, Field field, Object upstreamField, String path) {
+public record VerifiedConfig(ConfigValidator<? super Object> validator, boolean lock, Field field, Object upstreamField, String path, GlobalConfigFiles files, boolean snowball) {
+
+    YamlConfiguration configuration() {
+        return files.owner(snowball);
+    }
 
     public void set(String stringValue) throws IllegalArgumentException {
         Object value;
@@ -24,8 +29,16 @@ public record VerifiedConfig(ConfigValidator<? super Object> validator, boolean 
         validator.verify(this.get(), value);
 
         try {
-            LeavesConfig.config.set(path, validator.saveConvert(value));
-            LeavesConfig.save();
+            YamlConfiguration yaml = configuration();
+            Object previous = yaml.get(path);
+            yaml.set(path, validator.saveConvert(value));
+            try {
+                files.save(snowball);
+            } catch (IOException e) {
+                yaml.set(path, previous);
+                LeavesLogger.LOGGER.error("Unable to save configuration {}", path, e);
+                throw new IllegalArgumentException("Unable to save " + path, e);
+            }
             if (lock) {
                 throw new IllegalArgumentException("locked, will load after restart");
             }
@@ -47,7 +60,7 @@ public record VerifiedConfig(ConfigValidator<? super Object> validator, boolean 
     public String getString() {
         Object value = this.get();
 
-        Object savedValue = LeavesConfig.config.get(path);
+        Object savedValue = configuration().get(path);
         try {
             if (savedValue != null) {
                 savedValue = validator.loadConvert(savedValue);
@@ -62,8 +75,8 @@ public record VerifiedConfig(ConfigValidator<? super Object> validator, boolean 
     }
 
     @NotNull
-    @Contract("_, _, _, _ -> new")
-    public static VerifiedConfig build(@NotNull GlobalConfig config, @NotNull Field field, @Nullable Object upstreamField, @NotNull String upstreamPath) {
+    @Contract("_, _, _, _, _ -> new")
+    public static VerifiedConfig build(@NotNull GlobalConfig config, @NotNull Field field, @Nullable Object upstreamField, @NotNull String upstreamPath, GlobalConfigFiles files) {
         String path = upstreamPath + config.value();
 
         ConfigValidator<? super Object> validator;
@@ -74,7 +87,7 @@ public record VerifiedConfig(ConfigValidator<? super Object> validator, boolean 
             throw new RuntimeException();
         }
 
-        return new VerifiedConfig(validator, config.lock(), field, upstreamField, path);
+        return new VerifiedConfig(validator, config.lock(), field, upstreamField, path, files, config.snowball());
     }
 
     @SuppressWarnings("unchecked")

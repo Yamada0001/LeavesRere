@@ -208,7 +208,7 @@
 -    }
 +// Leaves start - create config file
 +tasks.registerRunTask("createLeavesConfig") {
-+    description = "Create a new leaves.yml"
++    description = "Generate config/leaves.yml and config/SnowBall.yml"
 +    mainClass = "org.leavesmc.leaves.config.GlobalConfigCreator"
 +    classpath(sourceSets.main.map { it.runtimeClasspath })
  }

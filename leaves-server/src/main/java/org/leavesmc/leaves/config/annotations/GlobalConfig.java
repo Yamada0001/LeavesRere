@@ -15,6 +15,8 @@ public @interface GlobalConfig {
 
     boolean lock() default false;
 
+    boolean snowball() default false;
+
     /**
      * 写入 leaves.yml 的注释，按数组顺序逐行输出在该配置项上方。
      *

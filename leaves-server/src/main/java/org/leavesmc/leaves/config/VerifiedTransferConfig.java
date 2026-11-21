@@ -1,35 +1,37 @@
 package org.leavesmc.leaves.config;
 
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.leavesmc.leaves.LeavesConfig;
 import org.leavesmc.leaves.LeavesLogger;
 import org.leavesmc.leaves.config.annotations.TransferConfig;
 import org.leavesmc.leaves.config.api.ConfigTransformer;
+import org.leavesmc.leaves.config.api.ConfigValidator;
 import org.leavesmc.leaves.config.api.impl.AutoConfigTransformer;
 
 import java.lang.reflect.Field;
 
 public record VerifiedTransferConfig(ConfigTransformer<? super Object, ? super Object> transformer, Field field, Object upstreamField, String path) {
 
-    public void run() {
-        if (LeavesConfig.config.contains(path)) {
-            Object savedValue = LeavesConfig.config.get(path);
-            if (savedValue != null) {
-                try {
-                    savedValue = transformer.loadConvert(savedValue);
-                    savedValue = transformer.transform(savedValue);
-                    field.set(upstreamField, savedValue);
-                    LeavesConfig.config.set(path, null);
-                } catch (IllegalAccessException | IllegalArgumentException e) {
-                    LeavesLogger.LOGGER.warn("Failure to load leaves config{}", path, e);
-                } catch (ConfigTransformer.StopTransformException ignored) {
-                }
-            } else {
-                LeavesLogger.LOGGER.warn("Failed to convert saved value for {}, reset to default", path);
-            }
+    public boolean run(YamlConfiguration source, YamlConfiguration target, String destination, ConfigValidator<? super Object> validator) {
+        if (transformer == null || !source.contains(path, true)) {
+            return false;
         }
+        try {
+            Object value = transformer.transform(transformer.loadConvert(source.get(path)));
+            var comments = source.getComments(path);
+            var inlineComments = source.getInlineComments(path);
+            source.set(path, null);
+            target.set(destination, validator.saveConvert(value));
+            target.setComments(destination, comments);
+            target.setInlineComments(destination, inlineComments);
+            return true;
+        } catch (IllegalArgumentException | ClassCastException e) {
+            LeavesLogger.LOGGER.warn("Failure to load legacy configuration {}", path, e);
+        } catch (ConfigTransformer.StopTransformException ignored) {
+        }
+        return false;
     }
 
     @Contract("_, _, _ -> new")

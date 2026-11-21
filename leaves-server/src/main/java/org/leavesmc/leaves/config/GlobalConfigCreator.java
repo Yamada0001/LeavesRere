@@ -1,93 +1,30 @@
 package org.leavesmc.leaves.config;
 
 import org.bukkit.configuration.file.YamlConfiguration;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-import org.leavesmc.leaves.LeavesConfig;
 import org.leavesmc.leaves.config.annotations.GlobalConfig;
-import org.leavesmc.leaves.config.annotations.GlobalConfigCategory;
 
-import java.io.File;
 import java.io.IOException;
-import java.lang.reflect.Field;
-import java.lang.reflect.Modifier;
-import java.util.Collections;
-import java.util.List;
+import java.nio.file.Path;
 
-import static org.leavesmc.leaves.config.GlobalConfigManager.CONFIG_START;
-
-@SuppressWarnings("CallToPrintStackTrace")
-public class GlobalConfigCreator {
-
-    private static YamlConfiguration config;
-
-    @SuppressWarnings("ResultOfMethodCallIgnored")
-    public static void main(String[] args) {
-        config = new YamlConfiguration();
-        config.options().setHeader(Collections.singletonList(LeavesConfig.CONFIG_HEADER));
-
-        config.set("config-version", LeavesConfig.CURRENT_CONFIG_VERSION);
-
-        for (Field field : LeavesConfig.class.getDeclaredFields()) {
-            initField(field, null, CONFIG_START);
-        }
-
-        config.set("settings.protocol.xaero-map-server-id", 0);
-
-        try {
-            File file = new File("leaves.yml");
-            if (file.exists()) {
-                file.delete();
-            }
-            file.createNewFile();
-            config.save(file);
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
+public final class GlobalConfigCreator {
+    private GlobalConfigCreator() {
     }
 
-    private static void initCategory(@NotNull Field categoryField, @NotNull GlobalConfigCategory globalCategory, @Nullable Object upstreamField, @NotNull String upstreamPath) {
-        try {
-            Object category = categoryField.get(upstreamField);
-            String categoryPath = upstreamPath + globalCategory.value() + ".";
-            for (Field field : categoryField.getType().getDeclaredFields()) {
-                initField(field, category, categoryPath);
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+    public static void main(String[] args) throws IOException {
+        create(Path.of("config"));
     }
 
-    private static void initField(@NotNull Field field, @Nullable Object upstreamField, @NotNull String upstreamPath) {
-        if (upstreamField != null || Modifier.isStatic(field.getModifiers())) {
-            field.setAccessible(true);
-
-            GlobalConfig globalConfig = field.getAnnotation(GlobalConfig.class);
-            if (globalConfig != null) {
-                initConfig(field, globalConfig, upstreamField, upstreamPath);
-                return;
-            }
-
-            GlobalConfigCategory globalCategory = field.getType().getAnnotation(GlobalConfigCategory.class);
-            if (globalCategory != null) {
-                initCategory(field, globalCategory, upstreamField, upstreamPath);
-            }
+    static void create(Path directory) throws IOException {
+        Path leaves = directory.resolve(GlobalConfigFiles.LEAVES_FILE);
+        Path snowball = directory.resolve(GlobalConfigFiles.SNOWBALL_FILE);
+        // Do not pick up values from an earlier template generation.
+        GlobalConfigFiles files = GlobalConfigFiles.empty(leaves, snowball);
+        for (VerifiedConfig entry : GlobalConfigManager.entries(files)) {
+            YamlConfiguration yaml = entry.configuration();
+            yaml.set(entry.path(), entry.validator().saveConvert(entry.get()));
+            GlobalConfigFiles.addDefaultComments(yaml, entry.path(), entry.field().getAnnotation(GlobalConfig.class));
         }
-    }
-
-
-    private static void initConfig(@NotNull Field field, GlobalConfig globalConfig, @Nullable Object upstreamField, @NotNull String upstreamPath) {
-        try {
-            VerifiedConfig verifiedConfig = VerifiedConfig.build(globalConfig, field, upstreamField, upstreamPath);
-            config.set(verifiedConfig.path(), verifiedConfig.validator().saveConvert(field.get(upstreamField)));
-
-
-            String[] comment = globalConfig.comment();
-            if (comment.length > 0) {
-                config.setComments(verifiedConfig.path(), List.of(comment));
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        files.leaves().set("settings.protocol.xaero-map-server-id", 0);
+        files.save();
     }
 }
