@@ -2051,5 +2051,17 @@ public final class LeavesConfig {
             "堆叠容器（如堆叠的潜影盒）被破坏时，把其中的内容物一并掉落。"
         })
         public boolean stackedContainerDestroyedDrop = true;
+
+        @GlobalConfig(value = "spear-charge-contact-cooldown", comment = {
+            "长矛冲锋仅在满足伤害、击退或下马条件时记入接触冷却；只扫到目标不再提前触发冷却。",
+            "不改变原版速度门槛、接触冷却时长或实体受伤后的无敌时间。"
+        })
+        public boolean spearChargeContactCooldown = false;
+
+        @GlobalConfig(value = "spear-charge-dragon-hit-part", comment = {
+            "长矛冲锋按实际命中的末影龙部位结算伤害，仍按龙本体计算接触冷却。",
+            "头部和颈部不受躯干部位减伤；保留原版阶段、伤害事件及其余部位的减伤规则。"
+        })
+        public boolean spearChargeDragonHitPart = false;
     }
 }
